@@ -7,7 +7,6 @@ from pathlib import Path
 from segSam import segMobileSam, segSam2_b_plus, segSam2_small, segSam2_tiny
 import cv2
 import logging
-from typing import List
 import redis
 
 app = FastAPI()

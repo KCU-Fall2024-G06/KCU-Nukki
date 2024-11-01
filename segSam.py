@@ -17,7 +17,7 @@ logger.setLevel(logging.DEBUG)
 
 def apply_mask_upscale(mask, image) -> str: # later move to util
     # Define the color with an alpha value
-    color = np.array([30/255, 144/255, 255/255, 0.6])
+    color = np.array([30/255, 144/255, 255/255, 1])
     h, w = mask.shape[-2:]
     mask = mask.astype(np.uint8)
     
@@ -28,7 +28,7 @@ def apply_mask_upscale(mask, image) -> str: # later move to util
         
     # Ensure the original image has an alpha channel
     if original_image.shape[2] != 4:
-        original_image = cv2.cvtColor(original_image, cv2.COLOR_BGR2BGRA)
+        original_image = cv2.cvtColor(original_image, cv2.COLOR_RGB2BGRA)
 
     # Create a mask image
     mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
@@ -46,17 +46,20 @@ def apply_mask_upscale(mask, image) -> str: # later move to util
     output_image[..., 3] = mask_image[..., 3]  # Set the alpha channel to the mask's alpha
     output_image[..., :3] = original_image[..., :3] * (mask_image[..., :3] > 0)  # Use the original colors where the mask is applied
 
-    model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=2)
-    upsampler = RealESRGANer(
-        scale=2,
-        model_path="./weights/RealESRGAN_x2plus.pth",
-        dni_weight=None,
-        model=model,
-        tile=0,  # no tile
-        tile_pad=10,  # tile padding
-        pre_pad=0,  # pre padding
-    )
-    output_image, mode = upsampler.enhance(output_image, outscale=2)
+    height, width = output_image.shape[:2]
+
+    if not (height > 500 or width > 500):
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=2)
+        upsampler = RealESRGANer(
+            scale=2,
+            model_path="./weights/RealESRGAN_x2plus.pth",
+            dni_weight=None,
+            model=model,
+            tile=0,  # no tile
+            tile_pad=10,  # tile padding
+            pre_pad=0,  # pre padding
+        )
+        output_image, mode = upsampler.enhance(output_image, outscale=2)
     # Create file name
     new_file_name = f"{uuid.uuid4()}.png"
     new_file_path = os.path.join(os.path.dirname("./result/"), new_file_name)
@@ -68,7 +71,7 @@ def apply_mask_upscale(mask, image) -> str: # later move to util
 
 def apply_mask(mask, image) -> str: # later move to util
     # Define the color with an alpha value
-    color = np.array([30/255, 144/255, 255/255, 0.6])
+    color = np.array([30/255, 144/255, 255/255, 1])
     h, w = mask.shape[-2:]
     mask = mask.astype(np.uint8)
     
@@ -79,7 +82,7 @@ def apply_mask(mask, image) -> str: # later move to util
         
     # Ensure the original image has an alpha channel
     if original_image.shape[2] != 4:
-        original_image = cv2.cvtColor(original_image, cv2.COLOR_BGR2BGRA)
+        original_image = cv2.cvtColor(original_image, cv2.COLOR_RGB2BGRA)
 
     # Create a mask image
     mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
@@ -115,6 +118,7 @@ def apply_mask(mask, image) -> str: # later move to util
 
 def segMobileSam(path: str, coords: List[List[int]]) -> str:
     image =  cv2.imread(path,cv2.IMREAD_UNCHANGED)
+    image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
     os.remove(path)
     logger.debug(f"coord: {coords}")
     logger.debug(f"Image size: {image.size}")
@@ -143,6 +147,7 @@ def segMobileSam(path: str, coords: List[List[int]]) -> str:
 
 def segSam2_tiny(path: str, coords: List[List[int]],option: bool) -> str:
     image =  cv2.imread(path,cv2.IMREAD_UNCHANGED)
+    image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
     os.remove(path)
     logger.debug(f"Image size: {image.size}")
     sam2_checkpoint = "./weights/sam2.1_hiera_tiny.pt"
@@ -185,6 +190,7 @@ def segSam2_tiny(path: str, coords: List[List[int]],option: bool) -> str:
 
 def segSam2_small(path: str, coords: List[List[int]], option: bool) -> str:
     image =  cv2.imread(path,cv2.IMREAD_UNCHANGED)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     os.remove(path)
     logger.debug(f"Image size: {image.size}")
     sam2_checkpoint = "./weights/sam2.1_hiera_small.pt"
@@ -227,6 +233,7 @@ def segSam2_small(path: str, coords: List[List[int]], option: bool) -> str:
 
 def segSam2_b_plus(path: str, coords: List[List[int]], option: bool) -> str:
     image =  cv2.imread(path,cv2.IMREAD_UNCHANGED)
+    image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
     os.remove(path)
     print(f"Image size: {image.size}")
     logger.debug(f"Image size: {image.size}")
