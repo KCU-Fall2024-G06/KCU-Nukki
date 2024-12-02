@@ -1,5 +1,7 @@
 import os
+from fastapi import Depends
 from matplotlib import pyplot as plt
+import redis
 import torch
 import numpy as np
 from sam2.build_sam import build_sam2
@@ -11,9 +13,12 @@ from mobile_sam import sam_model_registry, SamAutomaticMaskGenerator, SamPredict
 from typing import List
 from realesrgan import RealESRGANer
 from basicsr.archs.rrdbnet_arch import RRDBNet
+from connection import get_redis
+import pickle
 
 logger = logging.getLogger('uvicorn.error')
 logger.setLevel(logging.DEBUG)
+redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=False)
 
 def apply_mask_upscale(mask, image) -> str: # later move to util
     # Define the color with an alpha value
@@ -230,7 +235,62 @@ def segSam2_small(path: str, coords: List[List[int]], option: bool) -> str:
     
     return result
 
+def segSam2_b_plus_cached(path: str, coords: List[List[int]], option: bool, uuid: str) -> str:
+    logger.debug(f"logic part {uuid}")
+    cached = redis_client.get(uuid)
+    logger.debug(f"after gert")
+    device = torch.device("cpu")
+    print(f"using device: {device}")
+    sam2_checkpoint = "./weights/sam2.1_hiera_base_plus.pt"
+    model_cfg = "/configs/sam2.1/sam2.1_hiera_b+.yaml"
+    sam2_model = build_sam2(model_cfg, sam2_checkpoint, device=device)
 
+    predictor = SAM2ImagePredictor(sam2_model)
+    if cached is not None:
+        try:
+            # Deserialize the byte data into the original Python object (e.g., dictionary)
+            logger.debug(f"___________________cached")
+        except pickle.UnpicklingError as e:
+            logger.debug(f"___________________ntcached")
+    else:
+        logger.debug(f"dddd")
+
+    image =  cv2.imread(path,cv2.IMREAD_UNCHANGED)
+    image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
+
+    if cached:
+        logger.debug(f"___________________cached")
+        embedding = pickle.loads(cached)
+        predictor.import_fields(embedding)
+    else:
+        logger.debug(f"___________________ntcached")
+
+        predictor.set_image(image)
+
+    os.remove(path)
+
+    input_point = np.array(coords)
+    input_label = np.array([1] * input_point.shape[0])
+    logger.debug(f"input_point: {coords } :: {input_point.shape[0]}")
+    masks, scores, logits = predictor.predict(
+        point_coords=input_point,
+        point_labels=input_label,
+        multimask_output=True,
+    )
+    sorted_ind = np.argsort(scores)[::-1]
+    masks = masks[sorted_ind]
+    scores = scores[sorted_ind]
+    logits = logits[sorted_ind]
+    
+    if option:
+        result = apply_mask_upscale(masks[0],image)
+    else:
+        result = apply_mask(masks[0],image)
+    
+    return result
+
+
+# currently working 
 def segSam2_b_plus(path: str, coords: List[List[int]], option: bool) -> str:
     image =  cv2.imread(path,cv2.IMREAD_UNCHANGED)
     image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
@@ -254,8 +314,59 @@ def segSam2_b_plus(path: str, coords: List[List[int]], option: bool) -> str:
     predictor = SAM2ImagePredictor(sam2_model)
     predictor.set_image(image)
     
+    embedding = predictor.export_fields()
+    # logger.debug(f"Image size: {len(result)}")
     input_point = np.array(coords)
     input_label = np.array([1] * input_point.shape[0])
+    # logger.debug(f"input_point: {coords } :: {input_point.shape[0]}")
+    masks, scores, logits = predictor.predict(
+        point_coords=input_point,
+        point_labels=input_label,
+        multimask_output=True,
+    )
+    sorted_ind = np.argsort(scores)[::-1]
+    masks = masks[sorted_ind]
+    scores = scores[sorted_ind]
+    logits = logits[sorted_ind]
+    
+    if option:
+        result = apply_mask_upscale(masks[0],image)
+    else:
+        result = apply_mask(masks[0],image)
+
+    uuid_part  = os.path.basename(result).split('.')[0]
+
+    logger.debug(f"uuid: {uuid_part }")
+    byte_data = pickle.dumps(embedding)
+    redis_client.set(uuid_part, byte_data, ex=320)
+    return result
+
+
+def segSam2_b_plus_remove(path: str, coords: List[List[int]], option: bool) -> str:
+    image =  cv2.imread(path,cv2.IMREAD_UNCHANGED)
+    image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
+    os.remove(path)
+    print(f"Image size: {image.size}")
+    logger.debug(f"Image size: {image.size}")
+    sam2_checkpoint = "./weights/sam2.1_hiera_base_plus.pt"
+
+    model_cfg = "/configs/sam2.1/sam2.1_hiera_b+.yaml"
+    
+    # if torch.cuda.is_available():
+    #     device = torch.device("cuda")
+    # elif torch.backends.mps.is_available():
+    #     device = torch.device("mps")
+    # else:
+    device = torch.device("cpu")
+    print(f"using device: {device}")
+    
+    sam2_model = build_sam2(model_cfg, sam2_checkpoint, device=device)
+
+    predictor = SAM2ImagePredictor(sam2_model)
+    predictor.set_image(image)
+    
+    input_point = np.array(coords)
+    input_label = np.array([0] * input_point.shape[0])
     logger.debug(f"input_point: {coords } :: {input_point.shape[0]}")
     masks, scores, logits = predictor.predict(
         point_coords=input_point,

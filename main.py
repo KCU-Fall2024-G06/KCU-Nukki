@@ -4,18 +4,26 @@ from fastapi import BackgroundTasks, Body, FastAPI, File, UploadFile
 from fastapi.responses import FileResponse
 import shutil
 from pathlib import Path
-from segSam import segMobileSam, segSam2_b_plus, segSam2_small, segSam2_tiny
+from segSam import segMobileSam, segSam2_b_plus, segSam2_b_plus_cached, segSam2_b_plus_remove, segSam2_small, segSam2_tiny
 import cv2
 import logging
-import redis
+from redis.asyncio import Redis
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Update with allowed origins if necessary
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods (GET, POST, OPTIONS, etc.)
+    allow_headers=["*"],  # Allow all headers
+)
 
 logger = logging.getLogger('uvicorn.error')
 logger.setLevel(logging.DEBUG)
 
 @app.post("/upload/")
-async def upload_image(background_tasks: BackgroundTasks, image: UploadFile = File(...), coords: str = Body(...), option: str = Body(...)):
+async def upload_image(background_tasks: BackgroundTasks, image: UploadFile = File(...), coords: str = Body(...), option: str = Body(...), ):
     """
     API endpoint to accept an image file and return it in the response.
     """
@@ -34,9 +42,37 @@ async def upload_image(background_tasks: BackgroundTasks, image: UploadFile = Fi
     elif option == "2" or option == "5":
         result = segSam2_tiny(file_path, data, not bool(int(option) % 2)) 
     elif option == "3" or option == "6":
-        result = segSam2_b_plus(file_path, data, bool(int(option) % 2))           
+        result = segSam2_b_plus(file_path, data, bool(int(option) % 2))  
+    elif option == "7" or option == "8":
+        result = segSam2_b_plus_remove(file_path, data, bool(int(option) % 2))           
     else:
         result = segMobileSam(file_path, data)
+
+    file_name = os.path.basename(result)
+ 
+    background_tasks.add_task(cleanup, result)
+    return FileResponse(path=result, filename=file_name)
+
+@app.post("/cached/")
+async def upload_image(
+    background_tasks: BackgroundTasks, 
+    image: UploadFile = File(...), 
+    coords: str = Body(...), 
+    option: str = Body(...), 
+    uuid_key: str = Body(...)):
+    """
+    API endpoint to accept an image file and return it in the response.
+    """
+    uuid_part = os.path.basename(uuid_key).split('.')[0]
+    logger.debug(f"uuid_partp--: {uuid_part}")
+    data = convert_to_2d_list(coords)
+    file_extension = image.filename.split(".")[-1]
+    file_name = f"{uuid.uuid4()}.{file_extension}"
+    file_path = f"./uploads/{file_name}"
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(image.file, buffer)
+    
+    result = segSam2_b_plus_cached(file_path, data, bool(int(option) % 2),uuid=uuid_part)  
 
     file_name = os.path.basename(result)
 
