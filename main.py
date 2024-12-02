@@ -1,6 +1,6 @@
 import os
 import uuid
-from fastapi import BackgroundTasks, Body, FastAPI, File, UploadFile
+from fastapi import BackgroundTasks, Body, FastAPI, File, UploadFile, Depends, HTTPException, Form
 from fastapi.responses import FileResponse
 import shutil
 from pathlib import Path
@@ -9,6 +9,11 @@ import cv2
 import logging
 from redis.asyncio import Redis
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import secrets
+
+
+redis_client = Redis(host='localhost', port=6379, db=0, decode_responses=True)
 
 app = FastAPI()
 app.add_middleware(
@@ -22,8 +27,35 @@ app.add_middleware(
 logger = logging.getLogger('uvicorn.error')
 logger.setLevel(logging.DEBUG)
 
+
+async def verify_api_key(api_key: str = Form(...)):
+    """
+    Verifies if the provided API key exists in Redis.
+    Raises an HTTPException if the key is invalid.
+    """
+    stored_api_key = await redis_client.get("api_key")
+    if api_key != stored_api_key:
+        raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Key")
+    # api_keys = await redis_client.lrange("api_key", 0, -1)
+    # if api_key not in api_keys:
+        # raise HTTPException(status_code=401, detail="Unauthorized: Invalid API Key")
+
+
+@app.post("/generate_api_key/")
+async def generate_api_key_view():
+    api_key = secrets.token_hex(32)
+    await redis_client.set("api_key", api_key)
+    # await redis_client.lpush("api_key", api_key)
+    return JSONResponse({"api_key": api_key})
+
+
 @app.post("/upload/")
-async def upload_image(background_tasks: BackgroundTasks, image: UploadFile = File(...), coords: str = Body(...), option: str = Body(...), ):
+async def upload_image(
+    background_tasks: BackgroundTasks, 
+    image: UploadFile = File(...), 
+    coords: str = Body(...), 
+    option: str = Body(...), 
+    api_key: str = Depends(verify_api_key)):
     """
     API endpoint to accept an image file and return it in the response.
     """
@@ -59,7 +91,8 @@ async def upload_image(
     image: UploadFile = File(...), 
     coords: str = Body(...), 
     option: str = Body(...), 
-    uuid_key: str = Body(...)):
+    uuid_key: str = Body(...),
+    api_key: str = Depends(verify_api_key)):
     """
     API endpoint to accept an image file and return it in the response.
     """
